@@ -34,10 +34,6 @@ void timed(const std::vector<BitmapIterators> &iterators,
 void kmerge_iter(std::vector<BitmapIterators> &iterators) {
   std::optional<unsigned int> current;
   while (true) {
-    if (iterators.empty()) {
-      break;
-    }
-
     current.reset();
     std::make_heap(iterators.begin(), iterators.end(), cmp);
     auto end_of_heap = iterators.end();
@@ -54,11 +50,14 @@ void kmerge_iter(std::vector<BitmapIterators> &iterators) {
       current = minimum;
 
       if (++r.iter == r.end) {
-        std::swap(*end_of_heap, iterators.back());
-        iterators.pop_back();
+        iterators.erase(end_of_heap);
       }
 
-      if (iterators.empty() || end_of_heap == iterators.begin()) {
+      if (iterators.empty()) {
+        return;
+      }
+
+      if (end_of_heap == iterators.begin()) {
         break;
       }
     }
@@ -88,7 +87,7 @@ int main(int argc, char *argv[]) {
 
   std::random_device rd;  // a seed source for the random number engine
   std::mt19937 gen(rd()); // mersenne_twister_engine seeded with rd()
-  std::uniform_int_distribution<> distrib(1, num_values * 3);
+  std::uniform_int_distribution<> distrib(1, num_values * 5);
   std::vector<roaring::Roaring> bitmaps;
   for (int i = 0; i < num_bitmaps; i++) {
     roaring::Roaring r{};
