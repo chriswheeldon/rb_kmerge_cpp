@@ -33,10 +33,16 @@ void timed(const std::vector<BitmapIterators> &iterators,
 
 void kmerge_iter(std::vector<BitmapIterators> &iterators) {
   std::optional<unsigned int> current;
+  std::make_heap(iterators.begin(), iterators.end(), cmp);
+  auto end_of_heap = iterators.end();
+
   while (true) {
     current.reset();
-    std::make_heap(iterators.begin(), iterators.end(), cmp);
-    auto end_of_heap = iterators.end();
+
+    while (end_of_heap < iterators.end()) {
+      std::push_heap(iterators.begin(), end_of_heap + 1, cmp);
+      end_of_heap++;
+    }
 
     while (true) {
       std::pop_heap(iterators.begin(), end_of_heap--, cmp);
@@ -48,6 +54,7 @@ void kmerge_iter(std::vector<BitmapIterators> &iterators) {
         break;
       }
       current = minimum;
+      // std::cout << minimum << std::endl;
 
       if (++r.iter == r.end) {
         iterators.erase(end_of_heap);
@@ -65,18 +72,24 @@ void kmerge_iter(std::vector<BitmapIterators> &iterators) {
 }
 
 void kmerge_iter_simple(std::vector<BitmapIterators> &iterators) {
-  while (true) {
-    if (iterators.empty()) {
-      break;
-    }
+  std::make_heap(iterators.begin(), iterators.end(), cmp);
 
-    std::make_heap(iterators.begin(), iterators.end(), cmp);
+  bool reinsert = false;
+  while (!iterators.empty()) {
+    if (reinsert) {
+      std::push_heap(iterators.begin(), iterators.end(), cmp);
+    }
     std::pop_heap(iterators.begin(), iterators.end(), cmp);
 
     auto &r = iterators.back();
     auto minimum = *(r.iter++);
+    // std::cout << minimum << std::endl;
+
     if (r.iter == r.end) {
+      reinsert = false;
       iterators.pop_back();
+    } else {
+      reinsert = true;
     }
   }
 }
