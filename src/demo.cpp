@@ -1,98 +1,11 @@
 
+#include "rb_kmerge.h"
 #include "roaring.hh" // the amalgamated roaring.hh includes roaring64map.hh
 
-#include <algorithm>
 #include <chrono>
 #include <iostream>
-#include <optional>
 #include <random>
 #include <vector>
-
-struct BitmapIterators {
-  roaring::RoaringSetBitForwardIterator iter;
-  roaring::RoaringSetBitForwardIterator end;
-};
-
-auto cmp = [](const BitmapIterators &a, const BitmapIterators &b) {
-  return *(a.iter) > *(b.iter);
-};
-
-void timed(const std::vector<BitmapIterators> &iterators,
-           std::function<void(std::vector<BitmapIterators> &)> f) {
-
-  auto cloned = iterators;
-  auto start = std::chrono::high_resolution_clock::now();
-  f(cloned);
-  auto end = std::chrono::high_resolution_clock::now();
-  std::cout << "Time taken: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
-                                                                     start)
-                   .count()
-            << "ms" << std::endl;
-}
-
-void kmerge_iter(std::vector<BitmapIterators> &iterators) {
-  std::optional<unsigned int> current;
-  std::make_heap(iterators.begin(), iterators.end(), cmp);
-  auto end_of_heap = iterators.end();
-
-  while (true) {
-    current.reset();
-
-    while (end_of_heap < iterators.end()) {
-      std::push_heap(iterators.begin(), end_of_heap + 1, cmp);
-      end_of_heap++;
-    }
-
-    while (true) {
-      std::pop_heap(iterators.begin(), end_of_heap--, cmp);
-
-      auto &r = *(end_of_heap);
-      auto minimum = *r.iter;
-
-      if (current && minimum > *current) {
-        break;
-      }
-      current = minimum;
-      // std::cout << minimum << std::endl;
-
-      if (++r.iter == r.end) {
-        iterators.erase(end_of_heap);
-      }
-
-      if (iterators.empty()) {
-        return;
-      }
-
-      if (end_of_heap == iterators.begin()) {
-        break;
-      }
-    }
-  }
-}
-
-void kmerge_iter_simple(std::vector<BitmapIterators> &iterators) {
-  std::make_heap(iterators.begin(), iterators.end(), cmp);
-
-  bool reinsert = false;
-  while (!iterators.empty()) {
-    if (reinsert) {
-      std::push_heap(iterators.begin(), iterators.end(), cmp);
-    }
-    std::pop_heap(iterators.begin(), iterators.end(), cmp);
-
-    auto &r = iterators.back();
-    auto minimum = *(r.iter++);
-    // std::cout << minimum << std::endl;
-
-    if (r.iter == r.end) {
-      reinsert = false;
-      iterators.pop_back();
-    } else {
-      reinsert = true;
-    }
-  }
-}
 
 int main(int argc, char *argv[]) {
   auto num_bitmaps = std::stoi(argv[1]);
@@ -111,12 +24,18 @@ int main(int argc, char *argv[]) {
     bitmaps.push_back(r);
   }
 
-  std::vector<BitmapIterators> iterators;
-  std::transform(bitmaps.begin(), bitmaps.end(), std::back_inserter(iterators),
-                 [](const roaring::Roaring &r) {
-                   return BitmapIterators{r.begin(), r.end()};
-                 });
+  auto start = std::chrono::high_resolution_clock::now();
 
-  timed(iterators, kmerge_iter);
-  timed(iterators, kmerge_iter_simple);
+  auto range = rb_kmerge(bitmaps);
+  for (const auto &entry : range) {
+    continue;
+  }
+
+  auto end = std::chrono::high_resolution_clock::now();
+  std::cout << "Time taken: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                     start)
+                   .count()
+            << "ms" << std::endl;
+  return 0;
 }
