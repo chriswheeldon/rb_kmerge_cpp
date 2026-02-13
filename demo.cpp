@@ -56,7 +56,6 @@ void kmerge_iter(std::vector<BitmapIterators> &bitmaps) {
       current = minimum;
 
       if (++r.iter == r.end) {
-        std::cout << "r ";
         std::swap(*end_of_heap, bitmaps.back());
         bitmaps.pop_back();
       }
