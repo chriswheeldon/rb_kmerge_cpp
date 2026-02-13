@@ -1,10 +1,8 @@
 
-#include "roaring.c"
 #include "roaring.hh" // the amalgamated roaring.hh includes roaring64map.hh
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <iostream>
 #include <optional>
 #include <random>
@@ -19,10 +17,10 @@ auto cmp = [](const BitmapIterators &a, const BitmapIterators &b) {
   return *(a.iter) > *(b.iter);
 };
 
-void timed(const std::vector<BitmapIterators> &bitmaps,
+void timed(const std::vector<BitmapIterators> &iterators,
            std::function<void(std::vector<BitmapIterators> &)> f) {
 
-  auto cloned = bitmaps;
+  auto cloned = iterators;
   auto start = std::chrono::high_resolution_clock::now();
   f(cloned);
   auto end = std::chrono::high_resolution_clock::now();
@@ -33,19 +31,19 @@ void timed(const std::vector<BitmapIterators> &bitmaps,
             << "ms" << std::endl;
 }
 
-void kmerge_iter(std::vector<BitmapIterators> &bitmaps) {
+void kmerge_iter(std::vector<BitmapIterators> &iterators) {
   std::optional<unsigned int> current;
   while (true) {
-    if (bitmaps.empty()) {
+    if (iterators.empty()) {
       break;
     }
 
     current.reset();
-    std::make_heap(bitmaps.begin(), bitmaps.end(), cmp);
-    auto end_of_heap = bitmaps.end();
+    std::make_heap(iterators.begin(), iterators.end(), cmp);
+    auto end_of_heap = iterators.end();
 
     while (true) {
-      std::pop_heap(bitmaps.begin(), end_of_heap--, cmp);
+      std::pop_heap(iterators.begin(), end_of_heap--, cmp);
 
       auto &r = *(end_of_heap);
       auto minimum = *r.iter;
@@ -56,50 +54,49 @@ void kmerge_iter(std::vector<BitmapIterators> &bitmaps) {
       current = minimum;
 
       if (++r.iter == r.end) {
-        std::swap(*end_of_heap, bitmaps.back());
-        bitmaps.pop_back();
+        std::swap(*end_of_heap, iterators.back());
+        iterators.pop_back();
       }
 
-      if (bitmaps.empty() || end_of_heap == bitmaps.begin()) {
+      if (iterators.empty() || end_of_heap == iterators.begin()) {
         break;
       }
     }
   }
 }
 
-void kmerge_iter_simple(std::vector<BitmapIterators> &bitmaps) {
-  std::optional<uint32_t> current;
+void kmerge_iter_simple(std::vector<BitmapIterators> &iterators) {
   while (true) {
-    if (bitmaps.empty()) {
+    if (iterators.empty()) {
       break;
     }
 
-    std::make_heap(bitmaps.begin(), bitmaps.end(), cmp);
-    std::pop_heap(bitmaps.begin(), bitmaps.end(), cmp);
+    std::make_heap(iterators.begin(), iterators.end(), cmp);
+    std::pop_heap(iterators.begin(), iterators.end(), cmp);
 
-    auto &r = bitmaps.back();
+    auto &r = iterators.back();
     auto minimum = *(r.iter++);
     if (r.iter == r.end) {
-      bitmaps.pop_back();
+      iterators.pop_back();
     }
   }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+  auto num_bitmaps = std::stoi(argv[1]);
+  auto num_values = std::stoi(argv[2]);
+
   std::random_device rd;  // a seed source for the random number engine
   std::mt19937 gen(rd()); // mersenne_twister_engine seeded with rd()
-  std::uniform_int_distribution<> distrib(1, 10);
-
+  std::uniform_int_distribution<> distrib(1, num_values * 3);
   std::vector<roaring::Roaring> bitmaps;
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < num_bitmaps; i++) {
     roaring::Roaring r{};
-    for (int j = 0; j < 3; j++) {
+    for (int j = 0; j < num_values; j++) {
       auto v = distrib(gen);
       r.add(v);
-      std::cout << v << " ";
     }
     bitmaps.push_back(r);
-    std::cout << std::endl;
   }
 
   std::vector<BitmapIterators> iterators;
