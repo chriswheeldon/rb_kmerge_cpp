@@ -12,8 +12,7 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 CC = clang++
 CXX = clang++
-CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -std=c++20 -Wall -Ofast -march=native -mtune=native -funroll-loops -fno-strict-aliasing
-LDFLAGS ?= -flto
+CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -std=c++20 -Wall -Ofast
 
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o $@ $(LOADLIBES) $(LDLIBS)
