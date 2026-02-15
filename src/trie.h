@@ -3,10 +3,10 @@
 
 template <typename Key, typename Value> class TrieNode {
 public:
-  TrieNode(Key key, Value value) : key(key), value(value) {}
+  TrieNode(Key key, Value value) : key(key), value(std::move(value)) {}
 
-  const Key key;
   Value value;
+  const Key key;
   std::vector<std::unique_ptr<TrieNode>> children;
 
   TrieNode &addChild(Key &&key, Value &&value) {

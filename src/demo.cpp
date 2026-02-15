@@ -6,7 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
-#include <optional>
+#include <memory>
 #include <random>
 #include <unordered_map>
 #include <vector>
@@ -42,14 +42,14 @@ group(const std::vector<roaring::Roaring> &bitmaps) {
   return groups;
 }
 
-void commit_to_trie(TrieNode<size_t, std::optional<roaring::Roaring>> &node,
+void commit_to_trie(TrieNode<size_t, std::unique_ptr<roaring::Roaring>> &node,
                     std::vector<bool>::iterator begin,
                     std::vector<bool>::iterator current,
                     std::vector<bool>::iterator end, unsigned int value) {
   auto it = std::find(current, end, true);
   if (it == end) {
-    if (!node.value.has_value()) {
-      node.value = roaring::Roaring{};
+    if (!node.value) {
+      node.value = std::make_unique<roaring::Roaring>();
     }
     node.value->add(value);
     return;
@@ -63,17 +63,17 @@ void commit_to_trie(TrieNode<size_t, std::optional<roaring::Roaring>> &node,
 
   if (child_iter == node.children.end()) {
     auto &child =
-        node.addChild(std::move(index), std::optional<roaring::Roaring>{});
+        node.addChild(std::move(index), std::unique_ptr<roaring::Roaring>{});
     commit_to_trie(child, begin, it + 1, end, value);
   } else {
     commit_to_trie(**child_iter, begin, it + 1, end, value);
   }
 }
 
-TrieNode<size_t, std::optional<roaring::Roaring>>
+TrieNode<size_t, std::unique_ptr<roaring::Roaring>>
 group_trie(const std::vector<roaring::Roaring> &bitmaps) {
-  auto root =
-      TrieNode<size_t, std::optional<roaring::Roaring>>((size_t)SIZE_MAX, {});
+  auto root = TrieNode<size_t, std::unique_ptr<roaring::Roaring>>(
+      (size_t)SIZE_MAX, nullptr);
 
   unsigned int current_value = 0;
   std::vector<bool> current_group(bitmaps.size(), false);
@@ -98,12 +98,12 @@ group_trie(const std::vector<roaring::Roaring> &bitmaps) {
   return root;
 }
 
-std::tuple<size_t, size_t>
-summarise_trie(const TrieNode<size_t, std::optional<roaring::Roaring>> &node) {
+std::tuple<size_t, size_t> summarise_trie(
+    const TrieNode<size_t, std::unique_ptr<roaring::Roaring>> &node) {
   // Count number of groups and number of trie nodes
   size_t count = 0;
   size_t nodes = 1;
-  if (node.value.has_value()) {
+  if (node.value) {
     count++;
   }
   for (const auto &child : node.children) {
@@ -121,15 +121,13 @@ int main(int argc, char *argv[]) {
 
   std::random_device rd;  // a seed source for the random number engine
   std::mt19937 gen(rd()); // mersenne_twister_engine seeded with rd()
-  std::uniform_int_distribution<> distrib(1, num_values * spread);
-  std::vector<roaring::Roaring> bitmaps;
-  for (int i = 0; i < num_bitmaps; i++) {
-    roaring::Roaring r{};
-    for (int j = 0; j < num_values; j++) {
-      auto v = distrib(gen);
-      r.add(v);
+  std::uniform_int_distribution<> distrib(0, 10);
+  std::vector<roaring::Roaring> bitmaps(num_bitmaps * 11);
+  for (int i = 0; i < num_values; i++) {
+    for (int j = 0; j < num_bitmaps; j++) {
+      auto score = distrib(gen);
+      bitmaps[j * 11 + score].add(i);
     }
-    bitmaps.push_back(r);
   }
 
   for (auto &bitmap : bitmaps) {
