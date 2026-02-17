@@ -4,12 +4,20 @@
 #include "trie.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <memory>
 #include <random>
 #include <unordered_map>
 #include <vector>
+
+struct TrieValue {
+  roaring::Roaring bitmap;
+  roaring::BulkContext bulk_ctx;
+};
+
+using RbKmergeTrieNode = TrieNode<size_t, std::unique_ptr<TrieValue>>;
 
 std::unordered_map<std::vector<bool>, roaring::Roaring>
 group(const std::vector<roaring::Roaring> &bitmaps) {
@@ -42,38 +50,40 @@ group(const std::vector<roaring::Roaring> &bitmaps) {
   return groups;
 }
 
-void commit_to_trie(TrieNode<size_t, std::unique_ptr<roaring::Roaring>> &node,
-                    std::vector<bool>::iterator begin,
+void commit_to_trie(RbKmergeTrieNode &node, std::vector<bool>::iterator begin,
                     std::vector<bool>::iterator current,
                     std::vector<bool>::iterator end, unsigned int value) {
   auto it = std::find(current, end, true);
   if (it == end) {
     if (!node.value) {
-      node.value = std::make_unique<roaring::Roaring>();
+      node.value = std::make_unique<TrieValue>();
     }
-    node.value->add(value);
+    node.value->bitmap.addBulk(node.value->bulk_ctx, value);
     return;
   }
 
   size_t index = std::distance(begin, it);
 
-  auto child_iter =
-      std::find_if(node.children.begin(), node.children.end(),
-                   [&](const auto &child) { return child->key == index; });
+  // auto child_iter =
+  //     std::find_if(node.children.begin(), node.children.end(),
+  //                  [&](const auto &child) { return child->key == index; });
 
-  if (child_iter == node.children.end()) {
-    auto &child =
-        node.addChild(std::move(index), std::unique_ptr<roaring::Roaring>{});
+  // Use lower bound to get the child iterator since children are sorted by key
+  auto child_iter =
+      std::lower_bound(node.children.begin(), node.children.end(), index,
+                       [](const std::unique_ptr<RbKmergeTrieNode> &child,
+                          size_t idx) { return child->key < idx; });
+
+  if (child_iter == node.children.end() || (*child_iter)->key != index) {
+    auto &child = node.addChild(std::move(index), std::nullptr_t{});
     commit_to_trie(child, begin, it + 1, end, value);
   } else {
     commit_to_trie(**child_iter, begin, it + 1, end, value);
   }
 }
 
-TrieNode<size_t, std::unique_ptr<roaring::Roaring>>
-group_trie(const std::vector<roaring::Roaring> &bitmaps) {
-  auto root = TrieNode<size_t, std::unique_ptr<roaring::Roaring>>(
-      (size_t)SIZE_MAX, nullptr);
+RbKmergeTrieNode group_trie(const std::vector<roaring::Roaring> &bitmaps) {
+  auto root = RbKmergeTrieNode((size_t)SIZE_MAX, nullptr);
 
   unsigned int current_value = 0;
   std::vector<bool> current_group(bitmaps.size(), false);
@@ -98,8 +108,7 @@ group_trie(const std::vector<roaring::Roaring> &bitmaps) {
   return root;
 }
 
-std::tuple<size_t, size_t> summarise_trie(
-    const TrieNode<size_t, std::unique_ptr<roaring::Roaring>> &node) {
+std::tuple<size_t, size_t> summarise_trie(const RbKmergeTrieNode &node) {
   // Count number of groups and number of trie nodes
   size_t count = 0;
   size_t nodes = 1;
@@ -152,6 +161,44 @@ int main(int argc, char *argv[]) {
   auto [group_count, node_count] = summarise_trie(trie);
   std::cout << "Number of groups: " << group_count << std::endl;
   std::cout << "Number of trie nodes: " << node_count << std::endl;
+
+  end = std::chrono::high_resolution_clock::now();
+  std::cout << "Time taken: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                     start)
+                   .count()
+            << "ms" << std::endl;
+
+  // Convert C++ Roaring bitmaps to C API bitmaps for rb_kmerge_groups
+  std::vector<roaring::api::roaring_bitmap_t *> c_bitmaps;
+  c_bitmaps.reserve(bitmaps.size());
+  for (auto &bitmap : bitmaps) {
+    c_bitmaps.push_back(&bitmap.roaring);
+  }
+
+  start = std::chrono::high_resolution_clock::now();
+
+  int n_groups = 0;
+  KMGroupResult *groups_result =
+      rb_kmerge_groups(c_bitmaps.data(), c_bitmaps.size(), &n_groups);
+  std::cout << "Number of groups: " << n_groups << std::endl;
+
+  // Clean up
+  rb_kmerge_groups_free(groups_result, n_groups);
+
+  end = std::chrono::high_resolution_clock::now();
+  std::cout << "Time taken: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                     start)
+                   .count()
+            << "ms" << std::endl;
+
+  start = std::chrono::high_resolution_clock::now();
+
+  size_t s_results;
+  rb_kmerge_slab_trie_result_t *groups_result_slab_trie =
+      rb_kmerge_groups_slab_trie(c_bitmaps.data(), c_bitmaps.size(),
+                                 &s_results);
 
   end = std::chrono::high_resolution_clock::now();
   std::cout << "Time taken: "
