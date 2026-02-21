@@ -1,4 +1,5 @@
 #include "rb_kmerge.h"
+#include "hashmap.h"
 #include "slab_trie.h"
 #include <algorithm>
 #include <sys/types.h>
@@ -430,15 +431,125 @@ rb_kmerge_groups_slab_trie(roaring::api::roaring_bitmap_t **bitmaps,
   }
 
   // K-merge: insert elements into slab trie
+  uint8_t key_buf[sizeof(uint8_t) * n_bitmaps];
 
   while (heap_size > 0) {
     KMergNode *heap_entry = &heap[0];
-    size_t current_index = heap_entry->element_idx;
+    size_t key_len = 0;
     uint32_t current_val = heap[0].value.value;
 
     do {
-      size_t src = heap[0].element_idx;
-      current_index = heap[0].element_idx;
+      uint8_t src = heap[0].element_idx;
+      memcpy(key_buf + key_len, &src, sizeof(uint8_t));
+      key_len += sizeof(uint8_t);
+
+      roaring::api::roaring_uint32_iterator_t *it = iters[src];
+      roaring::api::roaring_advance_uint32_iterator(it);
+      if (it->has_value) {
+        heap[0].value.value = it->current_value;
+        heap_sift_down(heap, heap_size, 0);
+      } else {
+        heap[0] = heap[heap_size - 1];
+        heap_size--;
+        if (heap_size > 0) {
+          heap_sift_down(heap, heap_size, 0);
+        }
+      }
+    } while (heap_size > 0 && heap[0].value.value == current_val);
+
+    slab_trie_entry_t *trie_entry =
+        slab_trie_get_or_create(&root, key_buf, key_len);
+
+    if (!trie_entry->data) {
+      trie_entry->data = roaring::api::roaring_bitmap_create();
+    }
+
+    roaring::api::roaring_bitmap_add(
+        (roaring::api::roaring_bitmap_t *)trie_entry->data, current_val);
+  }
+
+  return nullptr;
+}
+
+// ============================================================
+// tidwall/hashmap implementation
+// ============================================================
+
+typedef struct {
+  size_t *key;
+  size_t key_len;
+  roaring::api::roaring_bitmap_t *bitmap;
+} hashmap_entry_t;
+
+int hashmap_entry_compare(const void *a, const void *b, void *udata) {
+  const hashmap_entry_t *ea = (const hashmap_entry_t *)a;
+  const hashmap_entry_t *eb = (const hashmap_entry_t *)b;
+
+  if (ea->key_len < eb->key_len) {
+    return -1;
+  }
+  if (ea->key_len > eb->key_len) {
+    return 1;
+  }
+  return memcmp(ea->key, eb->key, ea->key_len * sizeof(size_t));
+}
+
+uint64_t hashmap_entry_hash(const void *entry, uint64_t seed0, uint64_t seed1) {
+  const hashmap_entry_t *e = (const hashmap_entry_t *)entry;
+  return hashmap_sip(e->key, e->key_len * sizeof(size_t), seed0, seed1);
+}
+
+KMGroupResult *
+rb_kmerge_groups_hashmap(roaring::api::roaring_bitmap_t **bitmaps,
+                         int n_bitmaps, int *n_results) {
+  if (n_bitmaps <= 0 || !bitmaps) {
+    *n_results = 0;
+    return nullptr;
+  }
+
+  size_t nwords = (n_bitmaps + 63) / 64;
+  if (nwords < 1)
+    nwords = 1;
+
+  // Build iterators and min-heap
+  roaring::api::roaring_uint32_iterator_t **iters =
+      (roaring::api::roaring_uint32_iterator_t **)calloc(
+          n_bitmaps, sizeof(roaring::api::roaring_uint32_iterator_t *));
+  KMergNode *heap = (KMergNode *)malloc(n_bitmaps * sizeof(KMergNode));
+  int heap_size = 0;
+
+  for (int i = 0; i < n_bitmaps; i++) {
+    if (!bitmaps[i])
+      continue;
+    roaring::api::roaring_uint32_iterator_t *it =
+        roaring::api::roaring_create_iterator(bitmaps[i]);
+    iters[i] = it;
+    if (it->has_value) {
+      heap[heap_size].element_idx = i;
+      heap[heap_size].value.has_value = true;
+      heap[heap_size].value.value = it->current_value;
+      heap_size++;
+    }
+  }
+
+  if (heap_size > 1)
+    heap_heapify(heap, heap_size);
+
+  // K-merge: group elements by source-set bitmask
+  struct hashmap *map =
+      hashmap_new(sizeof(hashmap_entry_t), 0, 0, 0, hashmap_entry_hash,
+                  hashmap_entry_compare, NULL, NULL);
+
+  // Scratch buffer for building bitmask each iteration
+  size_t *bitmask_buf = (size_t *)calloc(nwords, sizeof(size_t));
+
+  while (heap_size > 0) {
+    uint32_t current_val = heap[0].value.value;
+    memset(bitmask_buf, 0, nwords * sizeof(size_t));
+
+    do {
+      int src = heap[0].element_idx;
+      bitmask_buf[src / 64] |= ((uint64_t)1) << (src % 64);
 
       roaring::api::roaring_uint32_iterator_t *it = iters[src];
       roaring::api::roaring_advance_uint32_iterator(it);
@@ -453,19 +564,56 @@ rb_kmerge_groups_slab_trie(roaring::api::roaring_bitmap_t **bitmaps,
       }
     } while (heap_size > 0 && heap[0].value.value == current_val);
 
-    uint8_t key_buf[sizeof(size_t)];
-    memcpy(key_buf, &current_index, sizeof(key_buf));
+    hashmap_entry_t entry = {
+        .key = bitmask_buf, .key_len = nwords, .bitmap = nullptr};
+    hashmap_entry_t *result = (hashmap_entry_t *)hashmap_get(map, &entry);
 
-    slab_trie_entry_t *trie_entry =
-        slab_trie_get_or_create(&root, key_buf, length_of_key(current_index));
-
-    if (!trie_entry->data) {
-      trie_entry->data = roaring::api::roaring_bitmap_create();
+    if (!result) {
+      // Allocate a new copy of the key for this entry
+      size_t *key_copy = (size_t *)malloc(nwords * sizeof(size_t));
+      memcpy(key_copy, bitmask_buf, nwords * sizeof(size_t));
+      entry.key = key_copy;
+      entry.bitmap = roaring::api::roaring_bitmap_create();
+      hashmap_set(map, &entry);
+      result = (hashmap_entry_t *)hashmap_get(map, &entry);
     }
 
-    roaring::api::roaring_bitmap_add(
-        (roaring::api::roaring_bitmap_t *)trie_entry->data, current_val);
+    roaring::api::roaring_bitmap_add(result->bitmap, current_val);
   }
 
-  return nullptr;
+  free(bitmask_buf);
+
+  // Free iterators
+  for (int i = 0; i < n_bitmaps; i++) {
+    if (iters[i])
+      roaring::api::roaring_free_uint32_iterator(iters[i]);
+  }
+  free(iters);
+  free(heap);
+
+  // Collect results from hash table
+  size_t count = hashmap_count(map);
+  KMGroupResult *results =
+      (KMGroupResult *)malloc(count * sizeof(KMGroupResult));
+  int ridx = 0;
+
+  size_t iter = 0;
+  void *item;
+  while (hashmap_iter(map, &iter, &item)) {
+    hashmap_entry_t *e = (hashmap_entry_t *)item;
+    results[ridx].nwords = nwords;
+    results[ridx].words = (uint64_t *)malloc(nwords * sizeof(uint64_t));
+    memcpy(results[ridx].words, e->key, nwords * sizeof(uint64_t));
+    results[ridx].members = e->bitmap;
+    ridx++;
+  }
+
+  hashmap_free(map);
+
+  // Sort by bitmask for deterministic output
+  nwords_for_cmp = nwords;
+  qsort(results, count, sizeof(KMGroupResult), kmgroup_cmp);
+
+  *n_results = count;
+  return results;
 }

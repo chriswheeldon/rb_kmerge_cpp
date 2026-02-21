@@ -145,31 +145,31 @@ int main(int argc, char *argv[]) {
 
   auto start = std::chrono::high_resolution_clock::now();
 
-  auto g = group(bitmaps);
-  std::cout << "Number of groups: " << g.size() << std::endl;
+  // auto g = group(bitmaps);
+  // std::cout << "Number of groups: " << g.size() << std::endl;
 
-  auto end = std::chrono::high_resolution_clock::now();
-  std::cout << "Time taken: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
-                                                                     start)
-                   .count()
-            << "ms" << std::endl;
+  // auto end = std::chrono::high_resolution_clock::now();
+  // std::cout << "Time taken: "
+  //           << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+  //                                                                    start)
+  //                  .count()
+  //           << "ms" << std::endl;
 
-  start = std::chrono::high_resolution_clock::now();
+  // start = std::chrono::high_resolution_clock::now();
 
-  auto trie = group_trie(bitmaps);
-  auto [group_count, node_count] = summarise_trie(trie);
-  std::cout << "Number of groups: " << group_count << std::endl;
-  std::cout << "Number of trie nodes: " << node_count << std::endl;
+  // auto trie = group_trie(bitmaps);
+  // auto [group_count, node_count] = summarise_trie(trie);
+  // std::cout << "Number of groups: " << group_count << std::endl;
+  // std::cout << "Number of trie nodes: " << node_count << std::endl;
 
-  end = std::chrono::high_resolution_clock::now();
-  std::cout << "Time taken: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(end -
-                                                                     start)
-                   .count()
-            << "ms" << std::endl;
+  // end = std::chrono::high_resolution_clock::now();
+  // std::cout << "Time taken: "
+  //           << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+  //                                                                    start)
+  //                  .count()
+  //           << "ms" << std::endl;
 
-  // Convert C++ Roaring bitmaps to C API bitmaps for rb_kmerge_groups
+  // // Convert C++ Roaring bitmaps to C API bitmaps for rb_kmerge_groups
   std::vector<roaring::api::roaring_bitmap_t *> c_bitmaps;
   c_bitmaps.reserve(bitmaps.size());
   for (auto &bitmap : bitmaps) {
@@ -186,7 +186,7 @@ int main(int argc, char *argv[]) {
   // Clean up
   rb_kmerge_groups_free(groups_result, n_groups);
 
-  end = std::chrono::high_resolution_clock::now();
+  auto end = std::chrono::high_resolution_clock::now();
   std::cout << "Time taken: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(end -
                                                                      start)
@@ -195,10 +195,10 @@ int main(int argc, char *argv[]) {
 
   start = std::chrono::high_resolution_clock::now();
 
-  size_t s_results;
-  rb_kmerge_slab_trie_result_t *groups_result_slab_trie =
-      rb_kmerge_groups_slab_trie(c_bitmaps.data(), c_bitmaps.size(),
-                                 &s_results);
+  KMGroupResult *groups_result_hashmap =
+      rb_kmerge_groups_hashmap(c_bitmaps.data(), c_bitmaps.size(), &n_groups);
+
+  std::cout << "Number of groups: " << n_groups << std::endl;
 
   end = std::chrono::high_resolution_clock::now();
   std::cout << "Time taken: "

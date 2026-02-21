@@ -79,3 +79,7 @@ typedef struct {
 rb_kmerge_slab_trie_result_t *
 rb_kmerge_groups_slab_trie(roaring::api::roaring_bitmap_t **bitmaps,
                            size_t n_bitmaps, size_t *n_results);
+
+KMGroupResult *
+rb_kmerge_groups_hashmap(roaring::api::roaring_bitmap_t **bitmaps,
+                         int n_bitmaps, int *n_results);

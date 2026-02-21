@@ -10,9 +10,12 @@ DEPS := $(OBJS:.o=.d)
 INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
-CC = clang++
+CC = clang
 CXX = clang++
-CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -std=c++20 -Wall -Ofast
+CXXFLAGS ?= $(INC_FLAGS) -MMD -MP -std=c++20 -Wall -Ofast
+CFLAGS ?= $(INC_FLAGS) -MMD -MP -std=c11 -Wall -Ofast
+LD = clang++
+LDFLAGS ?= -lstdc++
 
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o $@ $(LOADLIBES) $(LDLIBS)
